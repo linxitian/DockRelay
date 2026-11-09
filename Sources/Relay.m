@@ -11,7 +11,9 @@ static const CGEventType Entered = (CGEventType)NSEventTypeMouseEntered;
 static const CGEventType Exited = (CGEventType)NSEventTypeMouseExited;
 static const NSTimeInterval MaxLead = 1.0;
 static const NSTimeInterval MaxLag = 0.2;
-static const double CheckTimes[] = {0.18, 0.36, 0.63, 1.05, 1.65};
+// Check close together while the animation is settling, then back off.
+static const double CheckTimes[] = {0.025, 0.070, 0.125, 0.205, 0.325, 0.485, 0.695, 1.0, 1.35, 1.65};
+static const double ReplayIntervals[] = {0, 0.075, 0.15, 0.26};
 
 static pid_t DockPID(void) {
     return [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"]
@@ -39,6 +41,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     NSTimeInterval _changedAt;
     DockState _previous;
     NSUInteger _attempts;
+    NSTimeInterval _replayedAt;
     dispatch_queue_t _inspection;
     os_log_t _log;
 }
@@ -147,6 +150,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (!self.listening) return;
         self->_changedAt = now;
         self->_attempts = 0;
+        self->_replayedAt = 0;
         self->_previous = DockUnknown;
         [self schedule:0 generation:++self->_generation];
     });
@@ -164,7 +168,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (self->_generation != generation || !self.listening) return;
         if (![self hasCandidate]) {
             // Allow a genuine exit arriving just after the space notification.
-            if (index == 0) [self schedule:1 generation:generation];
+            if (CheckTimes[index] <= MaxLag) [self schedule:index + 1 generation:generation];
             return;
         }
 
@@ -177,8 +181,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
             if (number) [screens addObject:[NSValue valueWithRect:CGDisplayBounds(number.unsignedIntValue)]];
         }
         dispatch_async(self->_inspection, ^{
-            CGPoint cursor = CGPointZero;
-            DockState state = DockReadState(dock, front, screens, &cursor);
+            CGRect pointerGuard = CGRectNull;
+            DockState state = DockReadState(dock, front, screens, &pointerGuard);
             dispatch_async(dispatch_get_main_queue(), ^{
                 if (self->_generation != generation || !self.listening || self->_pid != dock) return;
                 if (self->_exitAt != exitAt) {
@@ -186,35 +190,48 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
                     [self schedule:index + 1 generation:generation];
                     return;
                 }
-                [self evaluate:state cursor:cursor index:index generation:generation];
+                [self evaluate:state pointerGuard:pointerGuard index:index generation:generation];
             });
         });
     });
 }
 
-- (void)evaluate:(DockState)state cursor:(CGPoint)cursor index:(NSUInteger)index generation:(NSUInteger)generation {
-    if (NSProcessInfo.processInfo.systemUptime - _changedAt > 1.9) return;
+- (void)evaluate:(DockState)state pointerGuard:(CGRect)pointerGuard
+           index:(NSUInteger)index generation:(NSUInteger)generation {
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    double elapsed = now - _changedAt;
+    if (elapsed > 1.9) return;
     if (state == DockClear) {
         if (_attempts) {
             _repairs++;
-            os_log(_log, "Dock cleared after replay");
+            os_log(_log, "Dock cleared after replay; space=%{public}ld ms attempts=%{public}lu",
+                   lround(elapsed * 1000), (unsigned long)_attempts);
             [self clearExit];
+        } else if (CheckTimes[index] < 0.12) {
+            // An early snapshot may see Dock before the Space animation has settled.
+            _previous = DockClear;
+            [self schedule:index + 1 generation:generation];
         }
         return;
     }
 
-    BOOL stuck = state == DockStuckHover || state == DockStuckVisible;
-    BOOL confirmed = stuck && (_previous == state ||
-        (_previous == DockStuckHover && state == DockStuckVisible));
+    // An exit recorded over Dock near the switch is characteristic of this bug.
+    // With a stale selected item, that is enough evidence for the first replay.
+    BOOL exitFromDock = [self hasCandidate] && fabs(_exitAt - _changedAt) <= 0.4 &&
+        CGRectContainsPoint(pointerGuard, CGEventGetLocation(_exit));
+    BOOL confirmed = DockHasReplayEvidence(state, _previous, exitFromDock);
     _previous = state;
-    if (confirmed && _attempts < 2 && index + 1 < sizeof(CheckTimes) / sizeof(CheckTimes[0])) {
-        [self replayNear:cursor];
+    if (confirmed && _attempts < sizeof(ReplayIntervals) / sizeof(ReplayIntervals[0]) &&
+        now - _replayedAt >= ReplayIntervals[_attempts] &&
+        index + 1 < sizeof(CheckTimes) / sizeof(CheckTimes[0])) {
+        [self replayOutside:pointerGuard at:now];
     }
     [self schedule:index + 1 generation:generation];
 }
 
-- (void)replayNear:(CGPoint)cursor {
-    if (![self hasCandidate] || _pid != DockPID() || !CGPreflightPostEventAccess()) return;
+- (void)replayOutside:(CGRect)pointerGuard at:(NSTimeInterval)now {
+    if (CGRectIsNull(pointerGuard) || ![self hasCandidate] ||
+        _pid != DockPID() || !CGPreflightPostEventAccess()) return;
     for (CGMouseButton button = kCGMouseButtonLeft; button <= kCGMouseButtonCenter; button++) {
         if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, button)) return;
     }
@@ -223,9 +240,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (!pointer) return;
     CGPoint current = CGEventGetLocation(pointer);
     CFRelease(pointer);
-    // The worker sampled the pointer before making further AX calls. If the
-    // user has since moved, leave Dock alone until the next fresh observation.
-    if (fabs(current.x - cursor.x) > 8 || fabs(current.y - cursor.y) > 8) return;
+    // The user can keep moving as long as the current pointer is outside Dock.
+    if (CGRectContainsPoint(pointerGuard, current)) return;
 
     CGEventRef event = CGEventCreateCopy(_exit);
     if (event) {
@@ -233,8 +249,11 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         CGEventSetTimestamp(event, _replayTimestamp);
         CGEventSetLocation(event, current);
         CGEventPostToPid(_pid, event);
+        _replayedAt = now;
         _attempts++;
-        os_log(_log, "Replayed a Dock tracking exit");
+        os_log(_log, "Replayed Dock exit; space=%{public}ld ms exit=%{public}ld ms attempt=%{public}lu",
+               lround((now - _changedAt) * 1000), lround((_exitAt - _changedAt) * 1000),
+               (unsigned long)_attempts);
         CFRelease(event);
     }
 }

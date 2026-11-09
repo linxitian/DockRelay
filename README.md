@@ -22,10 +22,10 @@ The build targets macOS 13 or later and contains Apple silicon and Intel slices.
 ## How it works
 
 - A listen-only Quartz tap sees only enter and exit tracking events sent to the current Dock PID. The latest exit is kept in memory. A new enter or Dock PID invalidates it.
-- A Space change opens a short inspection window. DockRelay checks for a recent exit, checks the Dock through Accessibility on a separate queue, and waits for two suspicious observations. Geometry uses Quartz display coordinates and the configured Dock edge. The cursor must be clear of the Dock and any magnified item it reports.
-- DockRelay copies the exit and sends it back to the same PID with a fresh timestamp and pointer location. It allows up to two sends in the inspection window and looks for recovery in a later sample. New Space changes supersede pending checks.
+- A Space change opens a short inspection window. DockRelay checks for a recent exit, checks the Dock through Accessibility on a separate queue. A fresh exit recorded over Dock and an item that is still hovered can trigger a replay after one observation. If the Dock only stays visible, or the exit did not originate over Dock, it waits for corroboration. Geometry uses Quartz display coordinates and the configured Dock edge. Immediately before posting, the current cursor must be clear of the Dock and any magnified item it reports.
+- DockRelay copies the exit and sends it back to the same PID with a fresh timestamp and pointer location. Checks start 25 ms after the Space notification and spread out as the animation settles. The app can send up to four times at increasing intervals and checks for recovery after sending. New Space changes supersede pending checks.
 
-There is no idle timer, network connection, or third-party runtime. The app does not record keys, click, take screenshots, move the pointer, or restart Dock. It logs attach, replay, and recovery status to the local unified log without app titles or cursor positions.
+There is no idle timer, network connection, or third-party runtime. The app does not record keys, click, take screenshots, move the pointer, or restart Dock. The local unified log records attach, replay, and recovery, including elapsed time from the Space notification. The elapsed time measures observation by the app, which includes the time until the next check.
 
 ```sh
 log stream --style compact --predicate 'subsystem == "io.github.linxitian.dockrelay"'

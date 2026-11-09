@@ -9,6 +9,12 @@ typedef NS_ENUM(NSInteger, DockState) {
     DockStuckVisible,
 };
 
+static inline BOOL DockHasReplayEvidence(DockState state, DockState previous, BOOL exitFromDock) {
+    if (state == DockStuckHover) return exitFromDock || previous == DockStuckHover;
+    if (state == DockStuckVisible) return previous == DockStuckHover || previous == DockStuckVisible;
+    return NO;
+}
+
 typedef NS_ENUM(NSInteger, DockEdge) {
     DockBottom,
     DockLeft,

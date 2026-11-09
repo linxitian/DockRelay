@@ -26,5 +26,10 @@ int main(void) {
     assert(DockClassify(NO, NO, NO, YES, YES) == DockClear);
     assert(DockClassify(YES, YES, NO, YES, YES) == DockBusy);
     assert(DockClassify(YES, NO, YES, YES, YES) == DockBusy);
+    assert(DockHasReplayEvidence(DockStuckHover, DockUnknown, YES));
+    assert(!DockHasReplayEvidence(DockStuckHover, DockUnknown, NO));
+    assert(!DockHasReplayEvidence(DockStuckVisible, DockUnknown, YES));
+    assert(DockHasReplayEvidence(DockStuckVisible, DockStuckHover, NO));
+    assert(!DockHasReplayEvidence(DockBusy, DockStuckHover, YES));
     puts("Dock geometry and decision checks passed");
 }

@@ -1,21 +1,27 @@
 # DockRelay
 
+<img src="Assets/DockRelay.svg" alt="DockRelay" width="96" align="right">
+
 DockRelay 用来处理切换 macOS 桌面空间后，鼠标已经移走、Dock 仍保持放大或挡在全屏窗口前的问题。它也会检查跨 Space 时鼠标仍留在 Dock 内、图标悬停状态却没有跟上光标的情况。它在菜单栏运行，可以设置为登录时启动。
 
 [English](README.md)
 
-## 使用
+## 安装
 
-1. 安装 Xcode 命令行工具或 Xcode，从源码构建。
+从 [最新 Release](https://github.com/linxitian/DockRelay/releases/latest) 下载 macOS 通用 ZIP，解压后将 `DockRelay.app` 移到「应用程序」。发布包采用 ad-hoc 签名，首次打开时 macOS 可能要求手动批准。可参照 [Apple 的应用打开说明](https://support.apple.com/zh-cn/102445)。
 
-   ```sh
-   ./build.sh
-   open build/DockRelay.app
-   ```
+也可以安装 Xcode 命令行工具或 Xcode，在源码目录运行以下命令。
 
-2. 在 **系统设置 → 隐私与安全** 中开启 **DockRelay**。macOS 27.2 的中文权限页叫「设备控制和数据访问」，旧版系统一般叫「辅助功能」。授权后打开 DockRelay 的菜单刷新状态。菜单提示需要输入监控时，再按系统提示授权并重新打开应用。
-3. 从 Dock 点击位于另一桌面空间的 App，在切换动画中快速移开鼠标，查看菜单中的「观察到恢复」。DockRelay 补发事件后观察到 Dock 恢复，计数才会增加。
-4. 日常使用时，把应用放到固定的应用程序目录再授权，并在菜单中勾选「登录时启动」。外置盘上的应用需要该磁盘在登录时可用。
+```sh
+./build.sh
+open build/DockRelay.app
+```
+
+## 授权和使用
+
+1. 在 **系统设置 → 隐私与安全** 中开启 **DockRelay**。macOS 27.2 的中文权限页叫「设备控制和数据访问」，旧版系统一般叫「辅助功能」。授权后打开 DockRelay 的菜单刷新状态。菜单提示需要输入监控时，再按系统提示授权并重新打开应用。
+2. 从 Dock 点击位于另一桌面空间的 App，在切换动画中快速移开鼠标，查看菜单中的「观察到恢复」。DockRelay 补发事件后观察到 Dock 恢复，计数才会增加。
+3. 日常使用时，把应用放到固定的应用程序目录再授权，并在菜单中勾选「登录时启动」。外置盘上的应用需要该磁盘在登录时可用。
 
 构建目标为 macOS 13 及以上，应用同时包含 Apple 芯片和 Intel 版本。临时签名的本地构建重新编译后可能要再次授权。如果开关已打开但应用仍提示未授权，在同一个权限页移除旧条目，再添加当前应用。卸载时关闭「登录时启动」、退出、删除应用，并从系统设置移除授权条目。
 
@@ -41,7 +47,7 @@ log stream --style compact --predicate 'subsystem == "io.github.linxitian.dockre
 
 工具通过公开 API 在用户会话中补发事件，依赖 Dock 当前使用的跟踪事件格式和辅助功能结构。系统实现变化时可能需要适配。Dock 自身的永久修复需要 Apple 更新系统。
 
-正式分发可以在构建时通过 `SIGN_IDENTITY` 选择 Developer ID Application 证书，并在发布前完成公证。参见 [Apple 公证文档](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
+如需让分发包默认通过 Gatekeeper 验证，可在构建时通过 `SIGN_IDENTITY` 选择 Developer ID Application 证书，并完成 Apple 公证。参见 [Apple 公证文档](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。
 
 ## 致谢
 

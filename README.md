@@ -1,21 +1,27 @@
 # DockRelay
 
+<img src="Assets/DockRelay.svg" alt="DockRelay" width="96" align="right">
+
 DockRelay clears stale Dock hover after a macOS Space switch. It also checks for a Dock that stays visible when it should hide and for a stale highlight when the pointer remains in Dock. It runs as a menu bar app and can start automatically at login.
 
 [简体中文](README.zh-CN.md)
 
-## Try it
+## Install
 
-1. Build on macOS with Xcode Command Line Tools or Xcode.
+Download the macOS universal ZIP from the [latest release](https://github.com/linxitian/DockRelay/releases/latest). Unzip it, then move `DockRelay.app` to Applications. The release uses ad-hoc signing, so macOS may ask you to approve the app on first launch. [Apple's guidance on opening Mac apps](https://support.apple.com/en-us/102445).
 
-   ```sh
-   ./build.sh
-   open build/DockRelay.app
-   ```
+To build from source with Xcode Command Line Tools or Xcode, run the following commands from the repository.
 
-2. Enable **DockRelay** in the Accessibility permissions page under **System Settings → Privacy & Security**. On macOS 27.2 the page may be labeled **Device Control and Data Access**. Open its menu bar menu to refresh the status. If the menu asks for Input Monitoring, follow the system prompt and reopen DockRelay.
-3. Reproduce the issue by clicking a Dock icon for an app in another Space and quickly moving the pointer away during the transition. Check **Recoveries** in the menu. The counter advances when the Dock clears after a replay.
-4. For daily use, put the app in a stable Applications folder before granting access and select **Launch at Login** in its menu.
+```sh
+./build.sh
+open build/DockRelay.app
+```
+
+## Enable and use
+
+1. Enable **DockRelay** in the Accessibility permissions page under **System Settings → Privacy & Security**. On macOS 27.2 the page may be labeled **Device Control and Data Access**. Open its menu bar menu to refresh the status. If the menu asks for Input Monitoring, follow the system prompt and reopen DockRelay.
+2. Reproduce the issue by clicking a Dock icon for an app in another Space and quickly moving the pointer away during the transition. Check **Recoveries** in the menu. The counter advances when the Dock clears after a replay.
+3. For daily use, put the app in a stable Applications folder before granting access and select **Launch at Login** in its menu.
 
 The build targets macOS 13 or later and contains Apple silicon and Intel slices. A local ad-hoc build may need a fresh Accessibility grant after rebuilding. If the existing entry appears enabled but the app says otherwise, remove the old entry and add the current app. To uninstall, turn off **Launch at Login**, quit, remove the app, and remove its privacy entries.
 
@@ -42,7 +48,7 @@ On the same Mac, 0.8.0 observed the correct icon selected 13–33 ms after each 
 
 This is a user-session workaround. The Quartz and Accessibility calls are public APIs, but the tracking event types delivered to Dock and its Accessibility structure are implementation details. If macOS changes them, the app may no longer find or replay a usable event. A permanent fix to the Dock itself requires an Apple update.
 
-For distribution, `SIGN_IDENTITY` selects a Developer ID Application signing identity. Sign and notarize the build before offering a public download. See [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
+For distribution, `SIGN_IDENTITY` selects a Developer ID Application signing identity. Use that identity and Apple notarization for a build intended to pass Gatekeeper verification by default. See [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).
 
 ## Credit
 

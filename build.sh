@@ -8,7 +8,7 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     -framework AppKit -framework ApplicationServices -framework ServiceManagement \
     Sources/main.m Sources/DockState.m Sources/Relay.m -o "$app/Contents/MacOS/DockRelay"
 /bin/cp Info.plist "$app/Contents/Info.plist"
-/bin/cp Assets/DockRelay.icns "$app/Contents/Resources/DockRelay.icns"
+/bin/cp Assets/DockRelay.icns LICENSE "$app/Contents/Resources/"
 if [ -n "${SIGN_IDENTITY:-}" ]; then
     /usr/bin/codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$app"
 else

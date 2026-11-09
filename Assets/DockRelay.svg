@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">DockRelay app icon</title>
+  <desc id="desc">On a light macOS icon, a blue motion arc leads from a small Dock tile to the enlarged tile under a white pointer.</desc>
+  <defs>
+    <path id="plate" d="M388 56H636C756 56 816 61 875 104C933 146 961 206 966 288C968 313 968 349 968 388V636C968 756 963 816 920 875C878 933 818 961 736 966C711 968 675 968 636 968H388C268 968 208 963 149 920C91 878 63 818 58 736C56 711 56 675 56 636V388C56 268 61 208 104 149C146 91 206 63 288 58C313 56 349 56 388 56Z"/>
+    <clipPath id="plate-clip"><use href="#plate"/></clipPath>
+    <linearGradient id="ceramic" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff"/><stop offset=".57" stop-color="#f2f7ff"/><stop offset="1" stop-color="#d5e4f9"/>
+    </linearGradient>
+    <radialGradient id="light" cx=".45" cy=".48" r=".55">
+      <stop stop-color="#b8d8ff" stop-opacity=".84"/>
+      <stop offset="1" stop-color="#dce9fa" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="plate-edge" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#ecf4ff"/><stop offset=".5" stop-color="#c6d7ec"/><stop offset="1" stop-color="#9ab4d6"/>
+    </linearGradient>
+    <linearGradient id="rail" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fafcff" stop-opacity=".93"/><stop offset=".48" stop-color="#e4efff" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#bad0ef" stop-opacity=".97"/>
+    </linearGradient>
+    <linearGradient id="rail-edge" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#fff"/><stop offset="1" stop-color="#89a7d0"/>
+    </linearGradient>
+    <linearGradient id="blue" x1=".15" y1="0" x2=".92" y2="1">
+      <stop stop-color="#68d2ff"/><stop offset=".4" stop-color="#3d99fa"/>
+      <stop offset="1" stop-color="#2651d4"/>
+    </linearGradient>
+    <linearGradient id="lavender" x1=".14" y1="0" x2=".9" y2="1">
+      <stop stop-color="#e1daff"/><stop offset="1" stop-color="#a9a1f6"/>
+    </linearGradient>
+    <linearGradient id="mint" x1=".14" y1="0" x2=".9" y2="1">
+      <stop stop-color="#c5f9f5"/><stop offset="1" stop-color="#6bcbc9"/>
+    </linearGradient>
+    <linearGradient id="arc" gradientUnits="userSpaceOnUse" x1="238" y1="400" x2="398" y2="288">
+      <stop stop-color="#5694ed" stop-opacity=".55"/><stop offset=".75" stop-color="#2c75dc"/>
+      <stop offset="1" stop-color="#245fc4"/>
+    </linearGradient>
+    <linearGradient id="pointer" x1="0" y1="0" x2=".9" y2="1">
+      <stop stop-color="#fff"/><stop offset="1" stop-color="#e3f6ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-.35" y="-.5" width="1.7" height="2.15" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="17" stdDeviation="18" flood-color="#284c8e" flood-opacity=".24"/>
+    </filter>
+    <filter id="blur" x="-.45" y="-1" width="1.9" height="3">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+
+  <use href="#plate" fill="url(#ceramic)"/>
+  <g clip-path="url(#plate-clip)">
+    <rect x="58" y="100" width="908" height="820" fill="url(#light)"/>
+    <path d="M135 192C187 126 242 105 393 105H607" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".8" stroke-linecap="round"/>
+    <ellipse cx="512" cy="711" rx="319" ry="34" fill="#658ed2" opacity=".27" filter="url(#blur)"/>
+
+    <!-- A movement arc rises from the left app toward the enlarged app. -->
+    <path d="M246 403C258 342 312 297 382 291M357 269L385 290L361 316" fill="none" stroke="url(#arc)" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <g filter="url(#shadow)">
+      <rect x="213" y="444" width="146" height="146" rx="38" fill="url(#lavender)" stroke="#8f87d3" stroke-width="2.5"/>
+      <path d="M235 473Q244 453 267 453H311" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".72" stroke-linecap="round"/>
+      <g fill="#5e50a8">
+        <rect x="256" y="484" width="24" height="24" rx="6"/>
+        <rect x="291" y="484" width="24" height="24" rx="6"/>
+        <rect x="256" y="519" width="24" height="24" rx="6"/>
+        <rect x="291" y="519" width="24" height="24" rx="6"/>
+      </g>
+
+      <rect x="665" y="444" width="146" height="146" rx="38" fill="url(#mint)" stroke="#459eaa" stroke-width="2.5"/>
+      <path d="M687 473Q696 453 719 453H763" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".76" stroke-linecap="round"/>
+      <path d="M709 514L728 496M709 514L728 532M767 514L748 496M767 514L748 532" fill="none" stroke="#21748a" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="382" y="306" width="260" height="264" rx="64" fill="#2452bb"/>
+      <rect x="382" y="291" width="260" height="258" rx="63" fill="url(#blue)" stroke="#2972d8" stroke-width="2.5"/>
+      <rect x="392" y="301" width="240" height="238" rx="54" fill="none" stroke="#d9f4ff" stroke-opacity=".43" stroke-width="2"/>
+      <path d="M411 331Q428 306 462 306H531" fill="none" stroke="#e9faff" stroke-width="4" stroke-opacity=".63" stroke-linecap="round"/>
+      <path d="M453 349Q448 345 448 352L448 481Q448 489 454 484L491 455L517 506Q520 512 526 509L544 500Q550 497 547 491L521 443L566 440Q574 439 568 434Z" fill="#1b3b9f" opacity=".48" transform="translate(4 9)"/>
+      <path d="M453 349Q448 345 448 352L448 481Q448 489 454 484L491 455L517 506Q520 512 526 509L544 500Q550 497 547 491L521 443L566 440Q574 439 568 434Z" fill="url(#pointer)" stroke="#fff" stroke-width="2.5" stroke-linejoin="round" transform="translate(4 0)"/>
+    </g>
+
+    <g filter="url(#shadow)">
+      <rect x="151" y="558" width="722" height="151" rx="57" fill="url(#rail)" stroke="url(#rail-edge)" stroke-width="3"/>
+      <path d="M196 573Q212 566 240 566H784Q812 566 828 573" fill="none" stroke="#fff" stroke-width="3" stroke-opacity=".9" stroke-linecap="round"/>
+      <circle cx="286" cy="634" r="5.5" fill="#8275bd"/>
+      <rect x="489" y="628" width="46" height="12" rx="6" fill="#3269cc"/>
+      <circle cx="738" cy="634" r="5.5" fill="#488c9d"/>
+    </g>
+  </g>
+  <use href="#plate" fill="none" stroke="url(#plate-edge)" stroke-width="3"/>
+</svg>

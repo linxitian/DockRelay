@@ -2,12 +2,13 @@
 set -eu
 cd "$(dirname "$0")"
 app="$PWD/build/DockRelay.app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 /usr/bin/xcrun clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 \
     -fobjc-arc -Os -Wall -Wextra -Werror \
     -framework AppKit -framework ApplicationServices -framework ServiceManagement \
     Sources/main.m Sources/DockState.m Sources/Relay.m -o "$app/Contents/MacOS/DockRelay"
 /bin/cp Info.plist "$app/Contents/Info.plist"
+/bin/cp Assets/DockRelay.icns "$app/Contents/Resources/DockRelay.icns"
 if [ -n "${SIGN_IDENTITY:-}" ]; then
     /usr/bin/codesign --force --options runtime --timestamp --sign "$SIGN_IDENTITY" "$app"
 else

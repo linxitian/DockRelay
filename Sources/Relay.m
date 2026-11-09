@@ -13,7 +13,9 @@ static const NSTimeInterval MaxLead = 1.0;
 static const NSTimeInterval MaxLag = 0.2;
 // Check close together while the animation is settling, then back off.
 static const double CheckTimes[] = {0.025, 0.070, 0.125, 0.205, 0.325, 0.485, 0.695, 1.0, 1.35, 1.65};
-static const double ReplayIntervals[] = {0, 0.075, 0.15, 0.26};
+static const double ExitCheckTimes[] = {0.02, 0.05, 0.09, 0.14, 0.20, 0.245};
+// Dock can still report its hover state during the shrink animation.
+static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
 
 static pid_t DockPID(void) {
     return [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"]
@@ -75,6 +77,9 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (_exit) CFRelease(_exit);
     _exit = NULL;
     _exitAt = 0;
+    _attempts = 0;
+    _replayedAt = 0;
+    _previous = DockUnknown;
 }
 
 - (void)detach {
@@ -129,6 +134,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         _exit = CGEventCreateCopy(event);
         _exitAt = NSProcessInfo.processInfo.systemUptime;
         _exits++;
+        if (_exit) [self checkEarly:0 generation:_generation exitAt:_exitAt];
     }
 }
 
@@ -149,8 +155,6 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         [self refresh];
         if (!self.listening) return;
         self->_changedAt = now;
-        self->_attempts = 0;
-        self->_replayedAt = 0;
         self->_previous = DockUnknown;
         [self schedule:0 generation:++self->_generation];
     });
@@ -172,26 +176,52 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
             return;
         }
 
-        pid_t dock = self->_pid;
-        pid_t front = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
-        NSTimeInterval exitAt = self->_exitAt;
-        NSMutableArray<NSValue *> *screens = [NSMutableArray array];
-        for (NSScreen *screen in NSScreen.screens) {
-            NSNumber *number = screen.deviceDescription[@"NSScreenNumber"];
-            if (number) [screens addObject:[NSValue valueWithRect:CGDisplayBounds(number.unsignedIntValue)]];
-        }
-        dispatch_async(self->_inspection, ^{
-            CGRect pointerGuard = CGRectNull;
-            DockState state = DockReadState(dock, front, screens, &pointerGuard);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if (self->_generation != generation || !self.listening || self->_pid != dock) return;
-                if (self->_exitAt != exitAt) {
-                    self->_previous = DockUnknown;
-                    [self schedule:index + 1 generation:generation];
-                    return;
-                }
-                [self evaluate:state pointerGuard:pointerGuard index:index generation:generation];
-            });
+        [self inspect:generation completion:^(DockState state, CGRect pointerGuard) {
+            [self evaluate:state pointerGuard:pointerGuard index:index generation:generation];
+        }];
+    });
+}
+
+- (void)checkEarly:(NSUInteger)index generation:(NSUInteger)generation exitAt:(NSTimeInterval)exitAt {
+    if (index >= sizeof(ExitCheckTimes) / sizeof(ExitCheckTimes[0])) return;
+    NSTimeInterval wait = MAX(0, exitAt + ExitCheckTimes[index] - NSProcessInfo.processInfo.systemUptime);
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        if (self->_generation != generation || self->_exitAt != exitAt || !self.listening ||
+            self->_attempts || [self hasCandidate]) return;
+        [self inspect:generation completion:^(DockState state, CGRect pointerGuard) {
+            NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+            if (self->_exitAt != exitAt || !self->_exit || now - exitAt > 0.27 ||
+                !DockExitWasInside(pointerGuard, CGEventGetLocation(self->_exit))) return;
+            if (state == DockStuckHover) {
+                if ([self replayOutside:pointerGuard at:now early:YES]) return;
+            } else if (state != DockBusy) {
+                return;
+            }
+            [self checkEarly:index + 1 generation:generation exitAt:exitAt];
+        }];
+    });
+}
+
+- (void)inspect:(NSUInteger)generation completion:(void (^)(DockState, CGRect))completion {
+    pid_t dock = _pid;
+    pid_t front = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+    NSTimeInterval exitAt = _exitAt;
+    NSMutableArray<NSValue *> *screens = [NSMutableArray array];
+    for (NSScreen *screen in NSScreen.screens) {
+        NSNumber *number = screen.deviceDescription[@"NSScreenNumber"];
+        if (number) [screens addObject:[NSValue valueWithRect:CGDisplayBounds(number.unsignedIntValue)]];
+    }
+    dispatch_async(_inspection, ^{
+        CGRect pointerGuard = CGRectNull;
+        DockState state = DockReadState(dock, front, screens, &pointerGuard);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (self->_generation != generation || !self.listening || self->_pid != dock) return;
+            if (self->_exitAt != exitAt) {
+                completion(DockUnknown, CGRectNull);
+                return;
+            }
+            completion(state, pointerGuard);
         });
     });
 }
@@ -204,8 +234,9 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (state == DockClear) {
         if (_attempts) {
             _repairs++;
-            os_log(_log, "Dock cleared after replay; space=%{public}ld ms attempts=%{public}lu",
-                   lround(elapsed * 1000), (unsigned long)_attempts);
+            os_log(_log, "Dock cleared; space=%{public}ld ms since exit=%{public}ld ms since replay=%{public}ld ms attempts=%{public}lu",
+                   lround(elapsed * 1000), lround((now - _exitAt) * 1000),
+                   lround((now - _replayedAt) * 1000), (unsigned long)_attempts);
             [self clearExit];
         } else if (CheckTimes[index] < 0.12) {
             // An early snapshot may see Dock before the Space animation has settled.
@@ -224,38 +255,43 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (confirmed && _attempts < sizeof(ReplayIntervals) / sizeof(ReplayIntervals[0]) &&
         now - _replayedAt >= ReplayIntervals[_attempts] &&
         index + 1 < sizeof(CheckTimes) / sizeof(CheckTimes[0])) {
-        [self replayOutside:pointerGuard at:now];
+        [self replayOutside:pointerGuard at:now early:NO];
     }
     [self schedule:index + 1 generation:generation];
 }
 
-- (void)replayOutside:(CGRect)pointerGuard at:(NSTimeInterval)now {
-    if (CGRectIsNull(pointerGuard) || ![self hasCandidate] ||
-        _pid != DockPID() || !CGPreflightPostEventAccess()) return;
+- (BOOL)replayOutside:(CGRect)pointerGuard at:(NSTimeInterval)now early:(BOOL)early {
+    if (CGRectIsNull(pointerGuard) || !_exit || (!early && ![self hasCandidate]) ||
+        _pid != DockPID() || !CGPreflightPostEventAccess()) return NO;
     for (CGMouseButton button = kCGMouseButtonLeft; button <= kCGMouseButtonCenter; button++) {
-        if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, button)) return;
+        if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, button)) return NO;
     }
 
     CGEventRef pointer = CGEventCreate(NULL);
-    if (!pointer) return;
+    if (!pointer) return NO;
     CGPoint current = CGEventGetLocation(pointer);
     CFRelease(pointer);
     // The user can keep moving as long as the current pointer is outside Dock.
-    if (CGRectContainsPoint(pointerGuard, current)) return;
+    if (CGRectContainsPoint(pointerGuard, current)) return NO;
 
     CGEventRef event = CGEventCreateCopy(_exit);
-    if (event) {
-        _replayTimestamp = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
-        CGEventSetTimestamp(event, _replayTimestamp);
-        CGEventSetLocation(event, current);
-        CGEventPostToPid(_pid, event);
-        _replayedAt = now;
-        _attempts++;
-        os_log(_log, "Replayed Dock exit; space=%{public}ld ms exit=%{public}ld ms attempt=%{public}lu",
-               lround((now - _changedAt) * 1000), lround((_exitAt - _changedAt) * 1000),
+    if (!event) return NO;
+    _replayTimestamp = clock_gettime_nsec_np(CLOCK_UPTIME_RAW);
+    CGEventSetTimestamp(event, _replayTimestamp);
+    CGEventSetLocation(event, current);
+    CGEventPostToPid(_pid, event);
+    CFRelease(event);
+    _replayedAt = now;
+    _attempts++;
+    if (early) {
+        os_log(_log, "Replayed Dock exit before Space; since exit=%{public}ld ms",
+               lround((now - _exitAt) * 1000));
+    } else {
+        os_log(_log, "Replayed Dock exit; space=%{public}ld ms since exit=%{public}ld ms attempt=%{public}lu",
+               lround((now - _changedAt) * 1000), lround((now - _exitAt) * 1000),
                (unsigned long)_attempts);
-        CFRelease(event);
     }
+    return YES;
 }
 
 - (void)dealloc {

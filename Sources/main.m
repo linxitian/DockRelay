@@ -42,7 +42,7 @@ static NSString *Text(NSString *zh, NSString *en) {
     [_relay refresh];
     [menu removeAllItems];
     BOOL trusted = AXIsProcessTrusted();
-    NSString *status = Text(@"等待辅助功能授权", @"Waiting for Accessibility");
+    NSString *status = Text(@"等待系统授权", @"Waiting for Accessibility");
     if (trusted) {
         status = _relay.listening && CGPreflightPostEventAccess()
             ? Text(@"正在监听 Dock", @"Watching Dock")
@@ -54,7 +54,7 @@ static NSString *Text(NSString *zh, NSString *en) {
         (unsigned long)_relay.exits, (unsigned long)_relay.repairs];
     [menu addItemWithTitle:counts action:NULL keyEquivalent:@""];
     if (!trusted || !CGPreflightPostEventAccess()) {
-        [self add:Text(@"辅助功能授权…", @"Allow Accessibility…") action:@selector(authorize:) menu:menu];
+        [self add:Text(@"设备控制权限…", @"Allow Accessibility…") action:@selector(authorize:) menu:menu];
     }
     if (trusted && !_relay.listening && !CGPreflightListenEventAccess()) {
         [self add:Text(@"输入监控授权…", @"Allow Input Monitoring…") action:@selector(allowListening:) menu:menu];

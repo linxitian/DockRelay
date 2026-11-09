@@ -15,6 +15,14 @@ static inline BOOL DockHasReplayEvidence(DockState state, DockState previous, BO
     return NO;
 }
 
+static inline BOOL DockExitWasInside(CGRect pointerGuard, CGPoint exitPoint) {
+    // The observation pads the actual Dock and selected item by 16 points.
+    // The early path requires an exit well inside that area, away from the edge.
+    if (CGRectIsNull(pointerGuard) || CGRectGetWidth(pointerGuard) <= 48 ||
+        CGRectGetHeight(pointerGuard) <= 48) return NO;
+    return CGRectContainsPoint(CGRectInset(pointerGuard, 24, 24), exitPoint);
+}
+
 typedef NS_ENUM(NSInteger, DockEdge) {
     DockBottom,
     DockLeft,

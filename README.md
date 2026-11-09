@@ -13,7 +13,7 @@ DockRelay clears stale Dock hover after a macOS Space switch. It also checks for
    open build/DockRelay.app
    ```
 
-2. Enable **DockRelay** in **System Settings → Privacy & Security → Accessibility**. Open its menu bar menu to refresh the status. If the menu asks for Input Monitoring, follow the system prompt and reopen DockRelay.
+2. Enable **DockRelay** in the Accessibility permissions page under **System Settings → Privacy & Security**. On macOS 27.2 the page may be labeled **Device Control and Data Access**. Open its menu bar menu to refresh the status. If the menu asks for Input Monitoring, follow the system prompt and reopen DockRelay.
 3. Reproduce the issue by clicking a Dock icon for an app in another Space and quickly moving the pointer away during the transition. Check **Recoveries** in the menu. The counter advances when the Dock clears after a replay.
 4. For daily use, put the app in a stable Applications folder before granting access and select **Launch at Login** in its menu.
 
@@ -22,10 +22,11 @@ The build targets macOS 13 or later and contains Apple silicon and Intel slices.
 ## How it works
 
 - A listen-only Quartz tap sees only enter and exit tracking events sent to the current Dock PID. The latest exit is kept in memory. A new enter or Dock PID invalidates it.
-- A Space change opens a short inspection window. DockRelay checks for a recent exit, checks the Dock through Accessibility on a separate queue. A fresh exit recorded over Dock and an item that is still hovered can trigger a replay after one observation. If the Dock only stays visible, or the exit did not originate over Dock, it waits for corroboration. Geometry uses Quartz display coordinates and the configured Dock edge. Immediately before posting, the current cursor must be clear of the Dock and any magnified item it reports.
-- DockRelay copies the exit and sends it back to the same PID with a fresh timestamp and pointer location. Checks start 25 ms after the Space notification and spread out as the animation settles. The app can send up to four times at increasing intervals and checks for recovery after sending. New Space changes supersede pending checks.
+- A real exit can open a brief inspection window before any Space notification. DockRelay replays early only when the original exit was well inside Dock, the cursor is now outside, and Accessibility still reports a hovered item. An ordinary exit at the edge does not qualify.
+- A Space change also opens a short inspection window. DockRelay checks for a recent exit, checks the Dock through Accessibility on a separate queue. A fresh exit recorded over Dock and an item that is still hovered can trigger a replay after one observation. If the Dock only stays visible, or the exit did not originate over Dock, it waits for corroboration. Geometry uses Quartz display coordinates and the configured Dock edge. Immediately before posting, the current cursor must be clear of the Dock and any magnified item it reports.
+- DockRelay copies the exit and sends it back to the same PID with a fresh timestamp and pointer location. Checks start 25 ms after the Space notification and spread out as the animation settles. The app can send up to four times per exit at increasing intervals. It gives the first replay time to clear the hover before retrying. New Space changes supersede pending checks.
 
-There is no idle timer, network connection, or third-party runtime. The app does not record keys, click, take screenshots, move the pointer, or restart Dock. The local unified log records attach, replay, and recovery, including elapsed time from the Space notification. The elapsed time measures observation by the app, which includes the time until the next check.
+There is no idle timer, network connection, or third-party runtime. The app does not record keys, click, take screenshots, move the pointer, or restart Dock. The local unified log records attach, replay, and recovery, including elapsed time from the captured exit and the Space notification. A recovery timestamp records when the app observed the result, which includes the time until its next check.
 
 ```sh
 log stream --style compact --predicate 'subsystem == "io.github.linxitian.dockrelay"'

@@ -12,7 +12,7 @@ static const CGEventType Exited = (CGEventType)NSEventTypeMouseExited;
 static const NSTimeInterval MaxLead = 1.0;
 static const NSTimeInterval MaxLag = 0.2;
 // Check close together while the animation is settling, then back off.
-static const double CheckTimes[] = {0.025, 0.070, 0.125, 0.205, 0.325, 0.485, 0.695, 1.0, 1.35, 1.65};
+static const double CheckTimes[] = {0, 0.038, 0.075, 0.125, 0.18, 0.25, 0.325, 0.485, 0.695, 1.0, 1.35, 1.65};
 static const double ExitCheckTimes[] = {0.02, 0.05, 0.09, 0.14, 0.20, 0.245};
 // Dock can still report its hover state during the shrink animation.
 static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
@@ -134,7 +134,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         _exit = CGEventCreateCopy(event);
         _exitAt = NSProcessInfo.processInfo.systemUptime;
         _exits++;
-        if (_exit) [self checkEarly:0 generation:_generation exitAt:_exitAt];
+        if (_exit) [self checkEarly:0 generation:_generation exitAt:_exitAt previous:DockUnknown];
     }
 }
 
@@ -156,7 +156,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (!self.listening) return;
         self->_changedAt = now;
         self->_previous = DockUnknown;
-        [self schedule:0 generation:++self->_generation];
+        [self schedule:0 generation:++self->_generation soonerAt:0];
     });
 }
 
@@ -164,15 +164,17 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     return _exit && _exitAt >= _changedAt - MaxLead && _exitAt <= _changedAt + MaxLag;
 }
 
-- (void)schedule:(NSUInteger)index generation:(NSUInteger)generation {
+- (void)schedule:(NSUInteger)index generation:(NSUInteger)generation soonerAt:(NSTimeInterval)sooner {
     if (index >= sizeof(CheckTimes) / sizeof(CheckTimes[0])) return;
-    NSTimeInterval wait = MAX(0, _changedAt + CheckTimes[index] - NSProcessInfo.processInfo.systemUptime);
+    NSTimeInterval due = _changedAt + CheckTimes[index];
+    if (sooner > 0) due = MIN(due, sooner);
+    NSTimeInterval wait = MAX(0, due - NSProcessInfo.processInfo.systemUptime);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (self->_generation != generation || !self.listening) return;
         if (![self hasCandidate]) {
             // Allow a genuine exit arriving just after the space notification.
-            if (CheckTimes[index] <= MaxLag) [self schedule:index + 1 generation:generation];
+            if (CheckTimes[index] <= MaxLag) [self schedule:index + 1 generation:generation soonerAt:0];
             return;
         }
 
@@ -182,7 +184,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     });
 }
 
-- (void)checkEarly:(NSUInteger)index generation:(NSUInteger)generation exitAt:(NSTimeInterval)exitAt {
+- (void)checkEarly:(NSUInteger)index generation:(NSUInteger)generation
+               exitAt:(NSTimeInterval)exitAt previous:(DockState)previous {
     if (index >= sizeof(ExitCheckTimes) / sizeof(ExitCheckTimes[0])) return;
     NSTimeInterval wait = MAX(0, exitAt + ExitCheckTimes[index] - NSProcessInfo.processInfo.systemUptime);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
@@ -191,14 +194,23 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
             self->_attempts || [self hasCandidate]) return;
         [self inspect:generation completion:^(DockState state, CGRect pointerGuard) {
             NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-            if (self->_exitAt != exitAt || !self->_exit || now - exitAt > 0.27 ||
-                !DockExitWasInside(pointerGuard, CGEventGetLocation(self->_exit))) return;
-            if (state == DockStuckHover) {
-                if ([self replayOutside:pointerGuard at:now early:YES]) return;
-            } else if (state != DockBusy) {
+            if (self->_exitAt != exitAt || !self->_exit || now - exitAt > 0.27) return;
+            if (state == DockUnknown) {
+                // Dock's accessibility tree can briefly be unavailable during a switch.
+                if (index < 2) {
+                    [self checkEarly:index + 1 generation:generation exitAt:exitAt previous:state];
+                }
                 return;
             }
-            [self checkEarly:index + 1 generation:generation exitAt:exitAt];
+
+            DockExitOrigin origin = DockClassifyExit(pointerGuard, CGEventGetLocation(self->_exit));
+            if (origin == DockExitOutside) return;
+            BOOL confirmed = state == DockStuckHover &&
+                (origin == DockExitInside || previous == DockStuckHover);
+            if (confirmed && [self replayOutside:pointerGuard at:now early:YES]) return;
+            if (state == DockBusy || state == DockStuckHover || (state == DockClear && index < 2)) {
+                [self checkEarly:index + 1 generation:generation exitAt:exitAt previous:state];
+            }
         }];
     });
 }
@@ -241,7 +253,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         } else if (CheckTimes[index] < 0.12) {
             // An early snapshot may see Dock before the Space animation has settled.
             _previous = DockClear;
-            [self schedule:index + 1 generation:generation];
+            [self schedule:index + 1 generation:generation soonerAt:0];
         }
         return;
     }
@@ -252,12 +264,18 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         CGRectContainsPoint(pointerGuard, CGEventGetLocation(_exit));
     BOOL confirmed = DockHasReplayEvidence(state, _previous, exitFromDock);
     _previous = state;
+    NSTimeInterval retryAt = 0;
     if (confirmed && _attempts < sizeof(ReplayIntervals) / sizeof(ReplayIntervals[0]) &&
-        now - _replayedAt >= ReplayIntervals[_attempts] &&
         index + 1 < sizeof(CheckTimes) / sizeof(CheckTimes[0])) {
-        [self replayOutside:pointerGuard at:now early:NO];
+        NSTimeInterval earliest = _replayedAt + ReplayIntervals[_attempts];
+        if (now >= earliest) {
+            [self replayOutside:pointerGuard at:now early:NO];
+        } else {
+            // Observe again at the retry deadline if the next planned check is later.
+            retryAt = earliest;
+        }
     }
-    [self schedule:index + 1 generation:generation];
+    [self schedule:index + 1 generation:generation soonerAt:retryAt];
 }
 
 - (BOOL)replayOutside:(CGRect)pointerGuard at:(NSTimeInterval)now early:(BOOL)early {

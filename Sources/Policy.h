@@ -15,12 +15,21 @@ static inline BOOL DockHasReplayEvidence(DockState state, DockState previous, BO
     return NO;
 }
 
-static inline BOOL DockExitWasInside(CGRect pointerGuard, CGPoint exitPoint) {
+typedef NS_ENUM(NSInteger, DockExitOrigin) {
+    DockExitOutside,
+    DockExitNearEdge,
+    DockExitInside,
+};
+
+static inline DockExitOrigin DockClassifyExit(CGRect pointerGuard, CGPoint point) {
     // The observation pads the actual Dock and selected item by 16 points.
-    // The early path requires an exit well inside that area, away from the edge.
-    if (CGRectIsNull(pointerGuard) || CGRectGetWidth(pointerGuard) <= 48 ||
-        CGRectGetHeight(pointerGuard) <= 48) return NO;
-    return CGRectContainsPoint(CGRectInset(pointerGuard, 24, 24), exitPoint);
+    // Leave a margin inside the frame so ordinary boundary exits never qualify.
+    if (CGRectIsNull(pointerGuard) || CGRectGetWidth(pointerGuard) <= 36 ||
+        CGRectGetHeight(pointerGuard) <= 36 ||
+        !CGRectContainsPoint(CGRectInset(pointerGuard, 18, 18), point)) return DockExitOutside;
+    if (CGRectGetWidth(pointerGuard) > 48 && CGRectGetHeight(pointerGuard) > 48 &&
+        CGRectContainsPoint(CGRectInset(pointerGuard, 24, 24), point)) return DockExitInside;
+    return DockExitNearEdge;
 }
 
 typedef NS_ENUM(NSInteger, DockEdge) {

@@ -32,9 +32,10 @@ int main(void) {
     assert(DockHasReplayEvidence(DockStuckVisible, DockStuckHover, NO));
     assert(!DockHasReplayEvidence(DockBusy, DockStuckHover, YES));
     CGRect dockGuard = CGRectInset(CGRectMake(450, 836, 540, 56), -16, -16);
-    assert(DockExitWasInside(dockGuard, CGPointMake(500, 860)));
-    assert(!DockExitWasInside(dockGuard, CGPointMake(500, 838)));
-    assert(!DockExitWasInside(dockGuard, CGPointMake(500, 815)));
-    assert(!DockExitWasInside(CGRectNull, CGPointZero));
+    assert(DockClassifyExit(dockGuard, CGPointMake(500, 860)) == DockExitInside);
+    assert(DockClassifyExit(dockGuard, CGPointMake(500, 840)) == DockExitNearEdge);
+    assert(DockClassifyExit(dockGuard, CGPointMake(500, 837)) == DockExitOutside);
+    assert(DockClassifyExit(dockGuard, CGPointMake(500, 815)) == DockExitOutside);
+    assert(DockClassifyExit(CGRectNull, CGPointZero) == DockExitOutside);
     puts("Dock geometry and decision checks passed");
 }

@@ -2,9 +2,17 @@
 
 <img src="Assets/DockRelay.svg" alt="DockRelay" width="96" align="right">
 
-DockRelay clears stale Dock hover after a macOS Space switch. It also checks for a Dock that stays visible when it should hide and for a stale highlight when the pointer remains in Dock. It runs as a menu bar app and can start automatically at login.
+DockRelay is a lightweight menu bar app that helps the Dock recover after switching macOS Spaces. It can start at login.
 
 [简体中文](README.zh-CN.md)
+
+## The Dock bug on macOS 27.2
+
+With Dock magnification enabled, click an app in the Dock whose window is in another Space. Move the pointer away from the Dock while the desktop is switching. On macOS 27.2, the icon can stay enlarged even after the pointer leaves. If the pointer stays inside the Dock and moves to another icon, the previous icon can remain highlighted or enlarged for a moment.
+
+A related report describes the Dock staying visible over a full-screen app after switching Spaces, even with the pointer well away from it. [Original report](https://www.v2ex.com/t/1254190).
+
+DockRelay detects these stale states and can replay a missed mouse exit or move to the Dock. The cross-Space magnification and hover cases were tested on macOS 27.2 (26B123) on Apple silicon. Some animation pauses can still occur.
 
 ## Install
 

@@ -38,6 +38,8 @@ log stream --style compact --predicate 'subsystem == "io.github.linxitian.dockre
 
 `./test.sh` checks the geometry for all three Dock positions, offset displays, a hidden Dock parked over an adjacent display, and the decisions for hover, unexpected visibility, and user interaction. The menu bar app was run on Apple silicon with macOS 27.2 (26B123). The tester reproduced their usual cross-Space issue, saw the Dock recover, and confirmed a nonzero recovery count. Older macOS releases, Intel, physical multi-monitor configurations, and the full-screen-only variant still need live coverage.
 
+On the same Mac, 0.8.0 observed the correct icon selected 13–33 ms after each of 13 early hover replays. This measures the Accessibility selection, and the tester could still see an occasional pause in the magnification animation.
+
 This is a user-session workaround. The Quartz and Accessibility calls are public APIs, but the tracking event types delivered to Dock and its Accessibility structure are implementation details. If macOS changes them, the app may no longer find or replay a usable event. A permanent fix to the Dock itself requires an Apple update.
 
 For distribution, `SIGN_IDENTITY` selects a Developer ID Application signing identity. Sign and notarize the build before offering a public download. See [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution).

@@ -37,6 +37,8 @@ log stream --style compact --predicate 'subsystem == "io.github.linxitian.dockre
 
 `./test.sh` 检查三个停靠方向、带偏移的显示器、隐藏 Dock 落在邻屏坐标范围的情况，以及正常、卡住和交互中的判断。已在 Apple 芯片 Mac 的 macOS 27.2（26B123）上启动并验证一次日常跨 Space 恢复，使用者看到 Dock 自行恢复，菜单中的恢复计数大于零。Intel、较早 macOS、实体多屏和全屏不隐藏仍需要实际复测。
 
+同一台 Mac 上，0.8.0 在 13 次提前补发移动后的 13–33 毫秒内观察到正确图标被选中。这个时间来自辅助功能状态，实测仍能看到偶发的放大动画停顿。
+
 工具通过公开 API 在用户会话中补发事件，依赖 Dock 当前使用的跟踪事件格式和辅助功能结构。系统实现变化时可能需要适配。Dock 自身的永久修复需要 Apple 更新系统。
 
 正式分发可以在构建时通过 `SIGN_IDENTITY` 选择 Developer ID Application 证书，并在发布前完成公证。参见 [Apple 公证文档](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)。

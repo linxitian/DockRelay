@@ -81,6 +81,7 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
 
     if (!target || !CGRectContainsPoint(CGRectInset(targetFrame, 2, 2), cursor)) return;
     geometry->hoverTarget = targetFrame;
+    geometry->hoverIdentity = CFHash(target);
     id selected = AXGet(target, kAXSelectedAttribute);
     if ([selected isEqual:@YES]) {
         geometry->hoverState = DockHoverAligned;

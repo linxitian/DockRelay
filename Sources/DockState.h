@@ -15,6 +15,7 @@ typedef struct {
     CGRect hoverFrame;
     CGRect hoverTarget;
     DockHoverState hoverState;
+    CFHashCode hoverIdentity;
 } DockGeometry;
 
 DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens,

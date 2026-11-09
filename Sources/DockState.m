@@ -84,6 +84,7 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
     id selected = AXGet(target, kAXSelectedAttribute);
     if ([selected isEqual:@YES]) {
         geometry->hoverState = DockHoverAligned;
+        geometry->hoverFrame = targetFrame;
         return;
     }
     if (![selected isEqual:@NO]) return;
@@ -95,6 +96,7 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
         CGRect previous = AXFrame(element);
         if (!CGRectIsNull(previous) && !CGRectContainsPoint(CGRectInset(previous, -4, -4), cursor)) {
             geometry->hoverState = DockHoverMismatch;
+            geometry->hoverFrame = previous;
             return;
         }
     }

@@ -62,10 +62,11 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
     __attribute__((objc_precise_lifetime)) id hitOwner = CFBridgingRelease(hit);
     AXUIElementRef target = AXElement(hitOwner);
     CGRect targetFrame = IsApplicationItem(target) ? AXFrame(target) : CGRectNull;
-    __attribute__((objc_precise_lifetime)) id items = AXGet(list, kAXChildrenAttribute);
-    if (![items isKindOfClass:NSArray.class]) return;
+    __attribute__((objc_precise_lifetime)) id items = nil;
 
     if (!CGRectContainsPoint(targetFrame, cursor)) {
+        items = AXGet(list, kAXChildrenAttribute);
+        if (![items isKindOfClass:NSArray.class]) return;
         // Some Dock versions do not return individual items in an AX hit test.
         target = NULL;
         for (id item in items) {
@@ -89,6 +90,8 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
         return;
     }
     if (![selected isEqual:@NO]) return;
+    if (!items) items = AXGet(list, kAXChildrenAttribute);
+    if (![items isKindOfClass:NSArray.class]) return;
     for (id item in items) {
         AXUIElementRef element = AXElement(item);
         if (!element || CFEqual(element, target) ||

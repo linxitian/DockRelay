@@ -19,9 +19,7 @@ static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
 static const double StationaryHoverRetry = 0.070;
 static const double HoverWatchDuration = 0.46;
 static const double EarlyWindow = 0.27;
-static const double HoverFollowUpDelay = 0.016;
-static const double HoverRetryDelay = 0.040;
-static const NSUInteger MaxHoverReplays = 2;
+static const NSUInteger MotionHistoryCapacity = 32;
 static const int64_t HoverReplayTag = 0x446f636b52656c61;
 
 typedef struct {
@@ -32,6 +30,11 @@ typedef struct {
     DockState previous;
     BOOL motionTriggered;
 } EarlyProbe;
+
+typedef struct {
+    CGPoint point;
+    NSTimeInterval time;
+} MotionSample;
 
 static BOOL ReadIdlePointer(CGPoint *location) {
     for (CGMouseButton button = kCGMouseButtonLeft; button <= kCGMouseButtonCenter; button++) {
@@ -72,12 +75,18 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     EarlyProbe _earlyProbe;
     NSUInteger _earlyTicket;
     CGPoint _earlyMotionOrigin;
+    CGRect _lastSampledHoverTarget;
+    MotionSample _motionHistory[32];
+    NSUInteger _motionCount;
+    NSUInteger _motionNext;
     CGRect _previousHoverTarget;
     CGRect _originalHoverFrame;
-    NSUInteger _hoverReplays;
-    CFHashCode _replayedHoverIdentity;
-    NSTimeInterval _hoverReplayedAt;
+    BOOL _hoverReplaySent;
     BOOL _hoverSettled;
+    BOOL _hoverSizeChanged;
+    CFHashCode _replayedHoverIdentity;
+    CGSize _replayedHoverSize;
+    NSTimeInterval _hoverReplayedAt;
     DockState _previous;
     NSUInteger _attempts;
     NSTimeInterval _replayedAt;
@@ -184,10 +193,14 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         _exitAt = NSProcessInfo.processInfo.systemUptime;
         _trackingExitAt = _exitAt;
         _earlyMotionOrigin = CGEventGetLocation(event);
+        _lastSampledHoverTarget = CGRectNull;
+        _motionCount = 0;
+        _motionNext = 0;
+        _hoverReplayedAt = 0;
+        _hoverSizeChanged = NO;
         _originalHoverFrame = CGRectNull;
         _previousHoverTarget = CGRectNull;
-        _hoverReplays = 0;
-        _hoverReplayedAt = 0;
+        _hoverReplaySent = NO;
         _hoverSettled = NO;
         _exits++;
         if (_exit) [self checkEarly:0 generation:_generation exitAt:_exitAt previous:DockUnknown];
@@ -212,6 +225,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (!self.listening) return;
         self->_changedAt = now;
         self->_previousHoverTarget = CGRectNull;
+        self->_hoverReplaySent = NO;
+        self->_hoverSettled = NO;
         self->_previous = DockUnknown;
         self->_firstHoverFrame = CGRectNull;
         self->_unchangedHoverChecks = 0;
@@ -233,7 +248,6 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (index >= sizeof(CheckTimes) / sizeof(CheckTimes[0])) return;
     NSTimeInterval due = _changedAt + CheckTimes[index];
     if (sooner > 0) due = MIN(due, sooner);
-    due = [self hoverFollowUpBefore:due];
     NSTimeInterval wait = MAX(0, due - NSProcessInfo.processInfo.systemUptime);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
@@ -259,8 +273,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 - (void)checkEarly:(NSUInteger)index generation:(NSUInteger)generation
                exitAt:(NSTimeInterval)exitAt previous:(DockState)previous {
     if (index >= sizeof(ExitCheckTimes) / sizeof(ExitCheckTimes[0])) return;
-    NSTimeInterval due = [self hoverFollowUpBefore:exitAt + ExitCheckTimes[index]];
-    EarlyProbe probe = {index, generation, exitAt, due, previous, NO};
+    EarlyProbe probe = {index, generation, exitAt, exitAt + ExitCheckTimes[index], previous, NO};
     [self queueEarlyProbe:probe];
 }
 
@@ -278,20 +291,26 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 }
 
 - (void)advanceEarlyProbeForMove:(CGEventRef)event {
-    EarlyProbe probe = _earlyProbe;
-    if (probe.dueAt == 0 || probe.motionTriggered || _hoverReplays >= MaxHoverReplays || _attempts ||
-        probe.generation != _generation || probe.exitAt != _exitAt ||
-        probe.index + 1 >= sizeof(ExitCheckTimes) / sizeof(ExitCheckTimes[0])) return;
-    if (CGEventGetIntegerValueField(event, kCGEventSourceUserData) == HoverReplayTag) return;
+    if (!_exit || CGEventGetIntegerValueField(event, kCGEventSourceUserData) == HoverReplayTag) return;
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (now - _exitAt > EarlyWindow) return;
 
     CGPoint pointer = CGEventGetLocation(event);
+    _motionHistory[_motionNext] = (MotionSample){pointer, now};
+    _motionNext = (_motionNext + 1) % MotionHistoryCapacity;
+    _motionCount = MIN(_motionCount + 1, MotionHistoryCapacity);
+
+    EarlyProbe probe = _earlyProbe;
+    if (probe.dueAt == 0 || probe.motionTriggered || _hoverReplaySent || _attempts ||
+        probe.generation != _generation || probe.exitAt != _exitAt ||
+        probe.index + 1 >= sizeof(ExitCheckTimes) / sizeof(ExitCheckTimes[0])) return;
+    if (CGRectContainsPoint(_lastSampledHoverTarget, pointer)) return;
     double dx = pointer.x - _earlyMotionOrigin.x;
     double dy = pointer.y - _earlyMotionOrigin.y;
     if (dx * dx + dy * dy < 25) return;
 
-    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
-    // Give Dock the original move first, and never advance a fallback by more than one frame.
-    NSTimeInterval sooner = MAX(now + 0.004, probe.dueAt - 0.016);
+    // Let Dock handle the original move first. Keep the final fallback at its original deadline.
+    NSTimeInterval sooner = MAX(now + 0.003, probe.dueAt - 0.018);
     if (probe.dueAt - sooner < 0.003) return;
     _earlyMotionOrigin = pointer;
     probe.dueAt = sooner;
@@ -357,12 +376,16 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     });
 }
 
-- (NSTimeInterval)hoverFollowUpBefore:(NSTimeInterval)due {
-    NSTimeInterval followUp = _hoverReplayedAt + HoverFollowUpDelay;
-    if (_hoverReplays && !_hoverSettled && followUp > NSProcessInfo.processInfo.systemUptime) {
-        return MIN(due, followUp);
+- (long)millisecondsInsideTarget:(CGRect)target at:(NSTimeInterval)now {
+    NSTimeInterval first = 0;
+    CGRect interior = CGRectInset(target, 2, 2);
+    for (NSUInteger n = 0; n < _motionCount; n++) {
+        NSUInteger index = (_motionNext + MotionHistoryCapacity - 1 - n) % MotionHistoryCapacity;
+        MotionSample sample = _motionHistory[index];
+        if (!CGRectContainsPoint(interior, sample.point)) break;
+        first = sample.time;
     }
-    return due;
+    return first ? lround((now - first) * 1000) : -1;
 }
 
 - (void)evaluateHover:(DockGeometry)geometry early:(BOOL)early motionTriggered:(BOOL)motionTriggered {
@@ -376,11 +399,22 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
                     motionTriggered ? "move" : "timer");
     }
 
-    if (geometry.hoverState == DockHoverAligned && _hoverReplays && !_hoverSettled &&
+    if (early) _lastSampledHoverTarget = geometry.hoverTarget;
+    if (_hoverReplayedAt && geometry.hoverState == DockHoverAligned &&
         geometry.hoverIdentity == _replayedHoverIdentity) {
-        _hoverSettled = YES;
-        os_log(_log, "Observed Dock hover align; %{public}s=%{public}ld ms since replay=%{public}ld ms",
-               phase, lround(elapsed * 1000), lround((now - _hoverReplayedAt) * 1000));
+        long sinceReplay = lround((now - _hoverReplayedAt) * 1000);
+        if (!_hoverSettled) {
+            _hoverSettled = YES;
+            os_log(_log, "Observed Dock hover align; %{public}s=%{public}ld ms since replay=%{public}ld ms",
+                   phase, lround(elapsed * 1000), sinceReplay);
+        }
+        CGSize size = geometry.hoverTarget.size;
+        if (!_hoverSizeChanged &&
+            (fabs(size.width - _replayedHoverSize.width) > 0.75 ||
+             fabs(size.height - _replayedHoverSize.height) > 0.75)) {
+            _hoverSizeChanged = YES;
+            os_log(_log, "Observed Dock icon size change; since replay=%{public}ld ms", sinceReplay);
+        }
     }
     if (early && _exit && geometry.hoverState == DockHoverAligned &&
         CGRectContainsPoint(geometry.hoverTarget, CGEventGetLocation(_exit))) {
@@ -395,13 +429,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 
     BOOL sameTarget = DockHoverFrameUnchanged(_previousHoverTarget, geometry.hoverTarget);
     _previousHoverTarget = geometry.hoverTarget;
-    if ((!early && !sameTarget) || _hoverReplays >= MaxHoverReplays) return;
-    if (_hoverReplays) {
-        BOOL sameIcon = geometry.hoverIdentity == _replayedHoverIdentity;
-        if (now - _hoverReplayedAt < HoverRetryDelay ||
-            (sameIcon && (_hoverSettled || !sameTarget))) return;
-    }
-    if (_pid != DockPID() || !CGPreflightPostEventAccess()) return;
+    if ((!early && !sameTarget) || _hoverReplaySent || _pid != DockPID() ||
+        !CGPreflightPostEventAccess()) return;
 
     CGPoint pointer;
     if (!ReadIdlePointer(&pointer) ||
@@ -409,23 +438,23 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (early) {
         // An empty hover is actionable only if this exit started over an app
         // and the physical pointer has now moved to a different app.
-        CGRect origin = geometry.hoverFrame;
-        if (missing || (_hoverReplays && !CGRectIsNull(_originalHoverFrame))) origin = _originalHoverFrame;
+        CGRect origin = missing ? _originalHoverFrame : geometry.hoverFrame;
         if (!_exit || !DockIsHoverTransfer(origin, geometry.hoverTarget, CGEventGetLocation(_exit), pointer)) return;
-        if (!_hoverReplays) _originalHoverFrame = origin;
     }
     CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pointer, kCGMouseButtonLeft);
     if (!move) return;
     CGEventSetIntegerValueField(move, kCGEventSourceUserData, HoverReplayTag);
     CGEventPostToPid(_pid, move);
     CFRelease(move);
-    _hoverReplays++;
-    _replayedHoverIdentity = geometry.hoverIdentity;
-    _hoverReplayedAt = now;
+    _hoverReplaySent = YES;
     _hoverSettled = NO;
-    os_log(_log, "Replayed Dock hover movement; %{public}s=%{public}ld ms state=%{public}s trigger=%{public}s attempt=%{public}lu",
+    _hoverSizeChanged = NO;
+    _replayedHoverIdentity = geometry.hoverIdentity;
+    _replayedHoverSize = geometry.hoverTarget.size;
+    _hoverReplayedAt = now;
+    os_log(_log, "Replayed Dock hover movement; %{public}s=%{public}ld ms state=%{public}s trigger=%{public}s in target=%{public}ld ms",
            phase, lround(elapsed * 1000), missing ? "unselected" : "mismatch",
-           motionTriggered ? "move" : "timer", (unsigned long)_hoverReplays);
+           motionTriggered ? "move" : "timer", [self millisecondsInsideTarget:geometry.hoverTarget at:now]);
 }
 
 - (void)evaluate:(DockState)state geometry:(DockGeometry)geometry

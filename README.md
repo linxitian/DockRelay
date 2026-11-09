@@ -1,6 +1,6 @@
 # DockRelay
 
-DockRelay clears stale Dock hover after a macOS Space switch. It also checks for a Dock that stays visible when it should hide. It runs as a menu bar app and can start automatically at login.
+DockRelay clears stale Dock hover after a macOS Space switch. It also checks for a Dock that stays visible when it should hide and for a stale highlight when the pointer remains in Dock. It runs as a menu bar app and can start automatically at login.
 
 [简体中文](README.zh-CN.md)
 
@@ -25,6 +25,8 @@ The build targets macOS 13 or later and contains Apple silicon and Intel slices.
 - A real exit can open a brief inspection window before any Space notification. DockRelay replays early when the exit was inside Dock, the cursor is now outside, and Accessibility still reports a hovered item. It takes two observations if the exit was close to the inner edge. Ordinary exits at or beyond the boundary do not qualify.
 - A Space change also opens a short inspection window. DockRelay checks for a recent exit, checks the Dock through Accessibility on a separate queue. A fresh exit recorded over Dock and an item that is still hovered can trigger a replay after one observation. If the Dock only stays visible, or the exit did not originate over Dock, it waits for corroboration. Geometry uses Quartz display coordinates and the configured Dock edge. Immediately before posting, the current cursor must be clear of the Dock and any magnified item it reports.
 - DockRelay copies the exit and sends it back to the same PID with a fresh timestamp and pointer location. Checks start when the Space notification arrives and spread out as the animation settles. A pending retry gets a fresh check when it becomes eligible. The app can send up to four times per exit at increasing intervals. It gives the first replay time to clear the hover. When the first send followed the Space notification and two further samples show the hovered item has not moved or shrunk, it can retry sooner. New Space changes supersede pending checks.
+
+- If the pointer stays inside Dock during a Space switch, DockRelay checks the app icon under it. When two samples find the same app under the pointer while an icon elsewhere remains hovered, it posts one mouse-move event to Dock at the current location. It skips ambiguous targets and pressed mouse buttons.
 
 There is no idle timer, network connection, or third-party runtime. The app does not record keys, click, take screenshots, move the pointer, or restart Dock. The local unified log records attach, replay, and recovery, including elapsed time from the captured exit and the Space notification. A recovery timestamp records when the app observed the result, which includes the time until its next check.
 

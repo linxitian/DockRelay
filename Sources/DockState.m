@@ -50,7 +50,58 @@ static CGRect FrontFullscreenFrame(pid_t front) {
     return AXFrame(window);
 }
 
-DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, DockGeometry *geometry) {
+static BOOL IsApplicationItem(AXUIElementRef item) {
+    return item && [AXGet(item, kAXSubroleAttribute)
+        isEqual:(__bridge NSString *)kAXApplicationDockItemSubrole];
+}
+
+static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cursor, DockGeometry *geometry) {
+    geometry->hoverState = DockHoverUnknown;
+    AXUIElementRef hit = NULL;
+    AXUIElementCopyElementAtPosition(root, (float)cursor.x, (float)cursor.y, &hit);
+    __attribute__((objc_precise_lifetime)) id hitOwner = CFBridgingRelease(hit);
+    AXUIElementRef target = AXElement(hitOwner);
+    CGRect targetFrame = IsApplicationItem(target) ? AXFrame(target) : CGRectNull;
+    __attribute__((objc_precise_lifetime)) id items = AXGet(list, kAXChildrenAttribute);
+    if (![items isKindOfClass:NSArray.class]) return;
+
+    if (!CGRectContainsPoint(targetFrame, cursor)) {
+        // Some Dock versions do not return individual items in an AX hit test.
+        target = NULL;
+        for (id item in items) {
+            AXUIElementRef element = AXElement(item);
+            if (!element) continue;
+            CGRect frame = AXFrame(element);
+            if (!CGRectContainsPoint(frame, cursor) || !IsApplicationItem(element)) continue;
+            if (target) return; // Overlapping targets are ambiguous.
+            target = element;
+            targetFrame = frame;
+        }
+    }
+
+    if (!target || !CGRectContainsPoint(CGRectInset(targetFrame, 2, 2), cursor)) return;
+    geometry->hoverTarget = targetFrame;
+    id selected = AXGet(target, kAXSelectedAttribute);
+    if ([selected isEqual:@YES]) {
+        geometry->hoverState = DockHoverAligned;
+        return;
+    }
+    if (![selected isEqual:@NO]) return;
+    geometry->hoverState = DockHoverUnselected;
+    for (id item in items) {
+        AXUIElementRef element = AXElement(item);
+        if (!element || CFEqual(element, target) ||
+            ![AXGet(element, kAXSelectedAttribute) isEqual:@YES] || !IsApplicationItem(element)) continue;
+        CGRect previous = AXFrame(element);
+        if (!CGRectIsNull(previous) && !CGRectContainsPoint(CGRectInset(previous, -4, -4), cursor)) {
+            geometry->hoverState = DockHoverMismatch;
+            return;
+        }
+    }
+}
+
+DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens,
+                        BOOL inspectHover, DockGeometry *geometry) {
     if (screens.count == 0) return DockUnknown;
     if (ButtonDown()) return DockBusy;
 
@@ -83,7 +134,10 @@ DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, Do
     CGPoint cursor = CGEventGetLocation(sample);
     CFRelease(sample);
     geometry->pointerGuard = CGRectInset(frame, -16, -16);
-    if (CGRectContainsPoint(geometry->pointerGuard, cursor)) return DockBusy;
+    if (CGRectContainsPoint(geometry->pointerGuard, cursor)) {
+        if (inspectHover) ReadHoverTarget(root, list, cursor, geometry);
+        return DockBusy;
+    }
 
     NSUserDefaults *settings = [[NSUserDefaults alloc] initWithSuiteName:@"com.apple.dock"];
     NSString *orientation = [settings stringForKey:@"orientation"];

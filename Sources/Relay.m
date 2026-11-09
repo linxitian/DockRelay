@@ -17,6 +17,18 @@ static const double ExitCheckTimes[] = {0.02, 0.05, 0.09, 0.14, 0.20, 0.245};
 // Dock can still report its hover state during the shrink animation.
 static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
 static const double StationaryHoverRetry = 0.070;
+static const double HoverWatchDuration = 0.46;
+
+static BOOL ReadIdlePointer(CGPoint *location) {
+    for (CGMouseButton button = kCGMouseButtonLeft; button <= kCGMouseButtonCenter; button++) {
+        if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, button)) return NO;
+    }
+    CGEventRef pointer = CGEventCreate(NULL);
+    if (!pointer) return NO;
+    *location = CGEventGetLocation(pointer);
+    CFRelease(pointer);
+    return YES;
+}
 
 static pid_t DockPID(void) {
     return [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"]
@@ -42,6 +54,10 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     CGEventTimestamp _replayTimestamp;
     NSUInteger _generation;
     NSTimeInterval _changedAt;
+    NSTimeInterval _trackingExitAt;
+    CGRect _previousHoverTarget;
+    BOOL _hoverReplaySent;
+    BOOL _hoverSettled;
     DockState _previous;
     NSUInteger _attempts;
     NSTimeInterval _replayedAt;
@@ -89,6 +105,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 
 - (void)detach {
     _generation++;
+    _trackingExitAt = 0;
     [self clearExit];
     if (_source) {
         CFRunLoopRemoveSource(CFRunLoopGetMain(), _source, kCFRunLoopCommonModes);
@@ -129,6 +146,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 - (void)track:(CGEventType)type event:(CGEventRef)event {
     if (type == kCGEventTapDisabledByTimeout || type == kCGEventTapDisabledByUserInput) {
         [self clearExit];
+        _trackingExitAt = 0;
         _generation++;
         if (_tap) CGEventTapEnable(_tap, true);
         return;
@@ -138,6 +156,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     if (type == Exited) {
         _exit = CGEventCreateCopy(event);
         _exitAt = NSProcessInfo.processInfo.systemUptime;
+        _trackingExitAt = _exitAt;
         _exits++;
         if (_exit) [self checkEarly:0 generation:_generation exitAt:_exitAt previous:DockUnknown];
     }
@@ -160,6 +179,9 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         [self refresh];
         if (!self.listening) return;
         self->_changedAt = now;
+        self->_previousHoverTarget = CGRectNull;
+        self->_hoverReplaySent = NO;
+        self->_hoverSettled = NO;
         self->_previous = DockUnknown;
         self->_firstHoverFrame = CGRectNull;
         self->_unchangedHoverChecks = 0;
@@ -171,6 +193,12 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     return _exit && _exitAt >= _changedAt - MaxLead && _exitAt <= _changedAt + MaxLag;
 }
 
+- (BOOL)watchingHover {
+    return _trackingExitAt > 0 &&
+        _trackingExitAt >= _changedAt - 0.55 && _trackingExitAt <= _changedAt + MaxLag &&
+        NSProcessInfo.processInfo.systemUptime - _changedAt <= HoverWatchDuration;
+}
+
 - (void)schedule:(NSUInteger)index generation:(NSUInteger)generation soonerAt:(NSTimeInterval)sooner {
     if (index >= sizeof(CheckTimes) / sizeof(CheckTimes[0])) return;
     NSTimeInterval due = _changedAt + CheckTimes[index];
@@ -179,14 +207,20 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(wait * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         if (self->_generation != generation || !self.listening) return;
-        if (![self hasCandidate]) {
+        BOOL inspectHover = [self watchingHover];
+        if (![self hasCandidate] && !inspectHover) {
             // Allow a genuine exit arriving just after the space notification.
             if (CheckTimes[index] <= MaxLag) [self schedule:index + 1 generation:generation soonerAt:0];
             return;
         }
 
-        [self inspect:generation completion:^(DockState state, DockGeometry geometry) {
-            [self evaluate:state geometry:geometry index:index generation:generation];
+        [self inspect:generation hover:inspectHover completion:^(DockState state, DockGeometry geometry) {
+            if (inspectHover && [self watchingHover]) [self evaluateHover:geometry];
+            if ([self hasCandidate]) {
+                [self evaluate:state geometry:geometry index:index generation:generation];
+            } else if ([self watchingHover]) {
+                [self schedule:index + 1 generation:generation soonerAt:0];
+            }
         }];
     });
 }
@@ -199,7 +233,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
                    dispatch_get_main_queue(), ^{
         if (self->_generation != generation || self->_exitAt != exitAt || !self.listening ||
             self->_attempts || [self hasCandidate]) return;
-        [self inspect:generation completion:^(DockState state, DockGeometry geometry) {
+        [self inspect:generation hover:NO completion:^(DockState state, DockGeometry geometry) {
             CGRect pointerGuard = geometry.pointerGuard;
             NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
             if (self->_exitAt != exitAt || !self->_exit || now - exitAt > 0.27) return;
@@ -223,7 +257,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     });
 }
 
-- (void)inspect:(NSUInteger)generation completion:(void (^)(DockState, DockGeometry))completion {
+- (void)inspect:(NSUInteger)generation hover:(BOOL)inspectHover
+      completion:(void (^)(DockState, DockGeometry))completion {
     pid_t dock = _pid;
     pid_t front = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
     NSTimeInterval exitAt = _exitAt;
@@ -233,17 +268,49 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (number) [screens addObject:[NSValue valueWithRect:CGDisplayBounds(number.unsignedIntValue)]];
     }
     dispatch_async(_inspection, ^{
-        DockGeometry geometry = { CGRectNull, CGRectNull };
-        DockState state = DockReadState(dock, front, screens, &geometry);
+        DockGeometry geometry = { CGRectNull, CGRectNull, CGRectNull, DockHoverNotInspected };
+        DockState state = DockReadState(dock, front, screens, inspectHover, &geometry);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self->_generation != generation || !self.listening || self->_pid != dock) return;
             if (self->_exitAt != exitAt) {
-                completion(DockUnknown, (DockGeometry){ CGRectNull, CGRectNull });
+                completion(DockUnknown, (DockGeometry){ CGRectNull, CGRectNull, CGRectNull, DockHoverNotInspected });
                 return;
             }
             completion(state, geometry);
         });
     });
+}
+
+- (void)evaluateHover:(DockGeometry)geometry {
+    double elapsed = NSProcessInfo.processInfo.systemUptime - _changedAt;
+    if (geometry.hoverState != DockHoverNotInspected) {
+        static const char *const states[] = {"not inspected", "unresolved", "aligned", "unselected", "mismatch"};
+        os_log_info(_log, "Dock hover probe; space=%{public}ld ms state=%{public}s",
+                    lround(elapsed * 1000), states[geometry.hoverState]);
+    }
+
+    if (geometry.hoverState == DockHoverAligned && _hoverReplaySent && !_hoverSettled) {
+        _hoverSettled = YES;
+        os_log(_log, "Observed Dock hover align; space=%{public}ld ms", lround(elapsed * 1000));
+    }
+    if (geometry.hoverState != DockHoverMismatch) {
+        _previousHoverTarget = CGRectNull;
+        return;
+    }
+
+    BOOL sameTarget = DockHoverFrameUnchanged(_previousHoverTarget, geometry.hoverTarget);
+    _previousHoverTarget = geometry.hoverTarget;
+    if (!sameTarget || _hoverReplaySent || _pid != DockPID() || !CGPreflightPostEventAccess()) return;
+
+    CGPoint pointer;
+    if (!ReadIdlePointer(&pointer) ||
+        !CGRectContainsPoint(CGRectInset(geometry.hoverTarget, 2, 2), pointer)) return;
+    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pointer, kCGMouseButtonLeft);
+    if (!move) return;
+    CGEventPostToPid(_pid, move);
+    CFRelease(move);
+    _hoverReplaySent = YES;
+    os_log(_log, "Replayed Dock hover movement; space=%{public}ld ms", lround(elapsed * 1000));
 }
 
 - (void)evaluate:(DockState)state geometry:(DockGeometry)geometry
@@ -311,14 +378,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 - (BOOL)replayOutside:(CGRect)pointerGuard at:(NSTimeInterval)now early:(BOOL)early {
     if (CGRectIsNull(pointerGuard) || !_exit || (!early && ![self hasCandidate]) ||
         _pid != DockPID() || !CGPreflightPostEventAccess()) return NO;
-    for (CGMouseButton button = kCGMouseButtonLeft; button <= kCGMouseButtonCenter; button++) {
-        if (CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState, button)) return NO;
-    }
-
-    CGEventRef pointer = CGEventCreate(NULL);
-    if (!pointer) return NO;
-    CGPoint current = CGEventGetLocation(pointer);
-    CFRelease(pointer);
+    CGPoint current;
+    if (!ReadIdlePointer(&current)) return NO;
     // The user can keep moving as long as the current pointer is outside Dock.
     if (CGRectContainsPoint(pointerGuard, current)) return NO;
 

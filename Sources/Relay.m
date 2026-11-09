@@ -13,7 +13,7 @@ static const NSTimeInterval MaxLead = 1.0;
 static const NSTimeInterval MaxLag = 0.2;
 // Check close together while the animation is settling, then back off.
 static const double CheckTimes[] = {0, 0.038, 0.075, 0.125, 0.18, 0.25, 0.325, 0.485, 0.695, 1.0, 1.35, 1.65};
-static const double ExitCheckTimes[] = {0.02, 0.05, 0.09, 0.14, 0.20, 0.245};
+static const double ExitCheckTimes[] = {0.02, 0.035, 0.05, 0.07, 0.09, 0.115, 0.14, 0.165, 0.20, 0.225, 0.245};
 // Dock can still report its hover state during the shrink animation.
 static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
 static const double StationaryHoverRetry = 0.070;
@@ -56,6 +56,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     NSTimeInterval _changedAt;
     NSTimeInterval _trackingExitAt;
     CGRect _previousHoverTarget;
+    CGRect _originalHoverFrame;
     BOOL _hoverReplaySent;
     BOOL _hoverSettled;
     DockState _previous;
@@ -157,6 +158,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         _exit = CGEventCreateCopy(event);
         _exitAt = NSProcessInfo.processInfo.systemUptime;
         _trackingExitAt = _exitAt;
+        _originalHoverFrame = CGRectNull;
         _previousHoverTarget = CGRectNull;
         _hoverReplaySent = NO;
         _hoverSettled = NO;
@@ -250,7 +252,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
 
             DockExitOrigin origin = DockClassifyExit(pointerGuard, CGEventGetLocation(self->_exit));
             if (origin == DockExitOutside &&
-                !CGRectContainsPoint(geometry.hoverFrame, CGEventGetLocation(self->_exit))) return;
+                !CGRectContainsPoint(geometry.hoverFrame, CGEventGetLocation(self->_exit)) &&
+                CGRectIsNull(self->_originalHoverFrame)) return;
             if (state == DockBusy) [self evaluateHover:geometry early:YES];
 
             BOOL confirmed = state == DockStuckHover &&
@@ -301,29 +304,38 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         os_log(_log, "Observed Dock hover align; %{public}s=%{public}ld ms",
                phase, lround(elapsed * 1000));
     }
-    if (geometry.hoverState != DockHoverMismatch) {
+    if (early && _exit && geometry.hoverState == DockHoverAligned &&
+        CGRectContainsPoint(geometry.hoverTarget, CGEventGetLocation(_exit))) {
+        _originalHoverFrame = geometry.hoverTarget;
+    }
+
+    BOOL missing = early && geometry.hoverState == DockHoverUnselected;
+    if (!missing && geometry.hoverState != DockHoverMismatch) {
         _previousHoverTarget = CGRectNull;
         return;
     }
 
-    // Before the Space notification, verify that the original exit came from
-    // the actual stale icon. After it, two samples must agree on the new target.
-    BOOL confirmed = early ?
-        _exit && CGRectContainsPoint(geometry.hoverFrame, CGEventGetLocation(_exit)) :
-        DockHoverFrameUnchanged(_previousHoverTarget, geometry.hoverTarget);
+    BOOL sameTarget = DockHoverFrameUnchanged(_previousHoverTarget, geometry.hoverTarget);
     _previousHoverTarget = geometry.hoverTarget;
-    if (!confirmed || _hoverReplaySent || _pid != DockPID() || !CGPreflightPostEventAccess()) return;
+    if ((!early && !sameTarget) || _hoverReplaySent || _pid != DockPID() ||
+        !CGPreflightPostEventAccess()) return;
 
     CGPoint pointer;
     if (!ReadIdlePointer(&pointer) ||
         !CGRectContainsPoint(CGRectInset(geometry.hoverTarget, 2, 2), pointer)) return;
+    if (early) {
+        // An empty hover is actionable only if this exit started over an app
+        // and the physical pointer has now moved to a different app.
+        CGRect origin = missing ? _originalHoverFrame : geometry.hoverFrame;
+        if (!_exit || !DockIsHoverTransfer(origin, geometry.hoverTarget, CGEventGetLocation(_exit), pointer)) return;
+    }
     CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, pointer, kCGMouseButtonLeft);
     if (!move) return;
     CGEventPostToPid(_pid, move);
     CFRelease(move);
     _hoverReplaySent = YES;
-    os_log(_log, "Replayed Dock hover movement; %{public}s=%{public}ld ms",
-           phase, lround(elapsed * 1000));
+    os_log(_log, "Replayed Dock hover movement; %{public}s=%{public}ld ms state=%{public}s",
+           phase, lround(elapsed * 1000), missing ? "unselected" : "mismatch");
 }
 
 - (void)evaluate:(DockState)state geometry:(DockGeometry)geometry

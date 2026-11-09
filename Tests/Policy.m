@@ -43,5 +43,13 @@ int main(void) {
     assert(!DockHoverFrameUnchanged(hovered, CGRectInset(hovered, 1, 1)));
     assert(!DockHoverFrameUnchanged(hovered, CGRectOffset(hovered, 52, 0)));
     assert(!DockHoverFrameUnchanged(hovered, CGRectNull));
+    CGRect next = CGRectOffset(hovered, 56, 0);
+    CGPoint origin = CGPointMake(520, 850);
+    CGPoint destination = CGPointMake(580, 850);
+    assert(DockIsHoverTransfer(hovered, next, origin, destination));
+    assert(!DockIsHoverTransfer(hovered, hovered, origin, origin));
+    assert(!DockIsHoverTransfer(hovered, next, origin, CGPointMake(557, 850)));
+    assert(!DockIsHoverTransfer(hovered, next, destination, destination));
+    assert(!DockIsHoverTransfer(CGRectNull, next, origin, destination));
     puts("Dock geometry and decision checks passed");
 }

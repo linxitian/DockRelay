@@ -24,6 +24,14 @@ static inline BOOL DockHoverFrameUnchanged(CGRect before, CGRect after) {
         fabs(CGRectGetHeight(before) - CGRectGetHeight(after)) < tolerance;
 }
 
+static inline BOOL DockIsHoverTransfer(CGRect origin, CGRect target, CGPoint exit, CGPoint pointer) {
+    if (CGRectIsNull(origin) || CGRectIsNull(target)) return NO;
+    return CGRectContainsPoint(origin, exit) &&
+        !CGRectContainsPoint(target, exit) &&
+        !CGRectContainsPoint(CGRectInset(origin, -4, -4), pointer) &&
+        CGRectContainsPoint(CGRectInset(target, 2, 2), pointer);
+}
+
 typedef NS_ENUM(NSInteger, DockExitOrigin) {
     DockExitOutside,
     DockExitNearEdge,

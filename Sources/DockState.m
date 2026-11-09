@@ -88,18 +88,18 @@ static void ReadHoverTarget(AXUIElementRef root, AXUIElementRef list, CGPoint cu
         return;
     }
     if (![selected isEqual:@NO]) return;
-    geometry->hoverState = DockHoverUnselected;
     for (id item in items) {
         AXUIElementRef element = AXElement(item);
         if (!element || CFEqual(element, target) ||
-            ![AXGet(element, kAXSelectedAttribute) isEqual:@YES] || !IsApplicationItem(element)) continue;
+            ![AXGet(element, kAXSelectedAttribute) isEqual:@YES]) continue;
+        if (!IsApplicationItem(element)) return;
         CGRect previous = AXFrame(element);
-        if (!CGRectIsNull(previous) && !CGRectContainsPoint(CGRectInset(previous, -4, -4), cursor)) {
-            geometry->hoverState = DockHoverMismatch;
-            geometry->hoverFrame = previous;
-            return;
-        }
+        if (CGRectIsNull(previous) || CGRectContainsPoint(CGRectInset(previous, -4, -4), cursor)) return;
+        geometry->hoverState = DockHoverMismatch;
+        geometry->hoverFrame = previous;
+        return;
     }
+    geometry->hoverState = DockHoverUnselected;
 }
 
 DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens,

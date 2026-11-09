@@ -50,7 +50,7 @@ static CGRect FrontFullscreenFrame(pid_t front) {
     return AXFrame(window);
 }
 
-DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, CGRect *pointerGuard) {
+DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, DockGeometry *geometry) {
     if (screens.count == 0) return DockUnknown;
     if (ButtonDown()) return DockBusy;
 
@@ -82,8 +82,8 @@ DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, CG
     if (!sample) return DockUnknown;
     CGPoint cursor = CGEventGetLocation(sample);
     CFRelease(sample);
-    *pointerGuard = CGRectInset(frame, -16, -16);
-    if (CGRectContainsPoint(*pointerGuard, cursor)) return DockBusy;
+    geometry->pointerGuard = CGRectInset(frame, -16, -16);
+    if (CGRectContainsPoint(geometry->pointerGuard, cursor)) return DockBusy;
 
     NSUserDefaults *settings = [[NSUserDefaults alloc] initWithSuiteName:@"com.apple.dock"];
     NSString *orientation = [settings stringForKey:@"orientation"];
@@ -103,18 +103,24 @@ DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, CG
     id items = AXGet(list, kAXChildrenAttribute);
     if (![items isKindOfClass:NSArray.class]) return DockUnknown;
     BOOL hovered = NO;
+    BOOL completeHoverFrame = YES;
     for (id item in items) {
         AXUIElementRef element = AXElement(item);
         if (element && [AXGet(element, kAXSelectedAttribute) isEqual:@YES]) {
             hovered = YES;
             // The magnified item may extend beyond the list's reported frame.
             CGRect itemFrame = AXFrame(element);
-            if (!CGRectIsNull(itemFrame)) {
-                *pointerGuard = CGRectUnion(*pointerGuard, CGRectInset(itemFrame, -16, -16));
-                if (CGRectContainsPoint(*pointerGuard, cursor)) return DockBusy;
+            if (CGRectIsNull(itemFrame)) {
+                completeHoverFrame = NO;
+                continue;
             }
+            geometry->hoverFrame = CGRectUnion(geometry->hoverFrame, itemFrame);
+            geometry->pointerGuard = CGRectUnion(geometry->pointerGuard, CGRectInset(itemFrame, -16, -16));
+            if (CGRectContainsPoint(geometry->pointerGuard, cursor)) return DockBusy;
         }
     }
+
+    if (!completeHoverFrame) geometry->hoverFrame = CGRectNull;
 
     BOOL shouldHide = [settings boolForKey:@"autohide"];
     if (!hovered && !shouldHide && front != dock) {

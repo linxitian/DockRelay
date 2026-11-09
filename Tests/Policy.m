@@ -37,5 +37,11 @@ int main(void) {
     assert(DockClassifyExit(dockGuard, CGPointMake(500, 837)) == DockExitOutside);
     assert(DockClassifyExit(dockGuard, CGPointMake(500, 815)) == DockExitOutside);
     assert(DockClassifyExit(CGRectNull, CGPointZero) == DockExitOutside);
+    CGRect hovered = CGRectMake(500, 828, 52, 52);
+    assert(DockHoverFrameUnchanged(hovered, hovered));
+    assert(DockHoverFrameUnchanged(hovered, CGRectOffset(hovered, 0, 0.25)));
+    assert(!DockHoverFrameUnchanged(hovered, CGRectInset(hovered, 1, 1)));
+    assert(!DockHoverFrameUnchanged(hovered, CGRectOffset(hovered, 52, 0)));
+    assert(!DockHoverFrameUnchanged(hovered, CGRectNull));
     puts("Dock geometry and decision checks passed");
 }

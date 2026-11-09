@@ -15,6 +15,15 @@ static inline BOOL DockHasReplayEvidence(DockState state, DockState previous, BO
     return NO;
 }
 
+static inline BOOL DockHoverFrameUnchanged(CGRect before, CGRect after) {
+    if (CGRectIsNull(before) || CGRectIsNull(after)) return NO;
+    const CGFloat tolerance = 0.75;
+    return fabs(CGRectGetMinX(before) - CGRectGetMinX(after)) < tolerance &&
+        fabs(CGRectGetMinY(before) - CGRectGetMinY(after)) < tolerance &&
+        fabs(CGRectGetWidth(before) - CGRectGetWidth(after)) < tolerance &&
+        fabs(CGRectGetHeight(before) - CGRectGetHeight(after)) < tolerance;
+}
+
 typedef NS_ENUM(NSInteger, DockExitOrigin) {
     DockExitOutside,
     DockExitNearEdge,

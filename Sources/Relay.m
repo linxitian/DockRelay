@@ -16,6 +16,7 @@ static const double CheckTimes[] = {0, 0.038, 0.075, 0.125, 0.18, 0.25, 0.325, 0
 static const double ExitCheckTimes[] = {0.02, 0.05, 0.09, 0.14, 0.20, 0.245};
 // Dock can still report its hover state during the shrink animation.
 static const double ReplayIntervals[] = {0, 0.185, 0.235, 0.30};
+static const double StationaryHoverRetry = 0.070;
 
 static pid_t DockPID(void) {
     return [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.apple.dock"]
@@ -44,6 +45,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     DockState _previous;
     NSUInteger _attempts;
     NSTimeInterval _replayedAt;
+    CGRect _firstHoverFrame;
+    NSUInteger _unchangedHoverChecks;
     dispatch_queue_t _inspection;
     os_log_t _log;
 }
@@ -79,6 +82,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     _exitAt = 0;
     _attempts = 0;
     _replayedAt = 0;
+    _firstHoverFrame = CGRectNull;
+    _unchangedHoverChecks = 0;
     _previous = DockUnknown;
 }
 
@@ -156,6 +161,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (!self.listening) return;
         self->_changedAt = now;
         self->_previous = DockUnknown;
+        self->_firstHoverFrame = CGRectNull;
+        self->_unchangedHoverChecks = 0;
         [self schedule:0 generation:++self->_generation soonerAt:0];
     });
 }
@@ -178,8 +185,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
             return;
         }
 
-        [self inspect:generation completion:^(DockState state, CGRect pointerGuard) {
-            [self evaluate:state pointerGuard:pointerGuard index:index generation:generation];
+        [self inspect:generation completion:^(DockState state, DockGeometry geometry) {
+            [self evaluate:state geometry:geometry index:index generation:generation];
         }];
     });
 }
@@ -192,7 +199,8 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
                    dispatch_get_main_queue(), ^{
         if (self->_generation != generation || self->_exitAt != exitAt || !self.listening ||
             self->_attempts || [self hasCandidate]) return;
-        [self inspect:generation completion:^(DockState state, CGRect pointerGuard) {
+        [self inspect:generation completion:^(DockState state, DockGeometry geometry) {
+            CGRect pointerGuard = geometry.pointerGuard;
             NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
             if (self->_exitAt != exitAt || !self->_exit || now - exitAt > 0.27) return;
             if (state == DockUnknown) {
@@ -215,7 +223,7 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     });
 }
 
-- (void)inspect:(NSUInteger)generation completion:(void (^)(DockState, CGRect))completion {
+- (void)inspect:(NSUInteger)generation completion:(void (^)(DockState, DockGeometry))completion {
     pid_t dock = _pid;
     pid_t front = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
     NSTimeInterval exitAt = _exitAt;
@@ -225,20 +233,20 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
         if (number) [screens addObject:[NSValue valueWithRect:CGDisplayBounds(number.unsignedIntValue)]];
     }
     dispatch_async(_inspection, ^{
-        CGRect pointerGuard = CGRectNull;
-        DockState state = DockReadState(dock, front, screens, &pointerGuard);
+        DockGeometry geometry = { CGRectNull, CGRectNull };
+        DockState state = DockReadState(dock, front, screens, &geometry);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (self->_generation != generation || !self.listening || self->_pid != dock) return;
             if (self->_exitAt != exitAt) {
-                completion(DockUnknown, CGRectNull);
+                completion(DockUnknown, (DockGeometry){ CGRectNull, CGRectNull });
                 return;
             }
-            completion(state, pointerGuard);
+            completion(state, geometry);
         });
     });
 }
 
-- (void)evaluate:(DockState)state pointerGuard:(CGRect)pointerGuard
+- (void)evaluate:(DockState)state geometry:(DockGeometry)geometry
            index:(NSUInteger)index generation:(NSUInteger)generation {
     NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
     double elapsed = now - _changedAt;
@@ -261,15 +269,37 @@ static CGEventRef Track(CGEventTapProxy proxy, CGEventType type, CGEventRef even
     // An exit recorded over Dock near the switch is characteristic of this bug.
     // With a stale selected item, that is enough evidence for the first replay.
     BOOL exitFromDock = [self hasCandidate] && fabs(_exitAt - _changedAt) <= 0.4 &&
-        CGRectContainsPoint(pointerGuard, CGEventGetLocation(_exit));
+        CGRectContainsPoint(geometry.pointerGuard, CGEventGetLocation(_exit));
     BOOL confirmed = DockHasReplayEvidence(state, _previous, exitFromDock);
     _previous = state;
+    // If the first replay followed the Space notification, look for a change
+    // before waiting out the full animation interval. Any motion or uncertain
+    // observation disables the shorter retry for this exit.
+    if (_attempts == 1 && !CGRectIsNull(_firstHoverFrame)) {
+        if (state == DockStuckHover && DockHoverFrameUnchanged(_firstHoverFrame, geometry.hoverFrame)) {
+            _unchangedHoverChecks++;
+        } else {
+            _firstHoverFrame = CGRectNull;
+            _unchangedHoverChecks = 0;
+        }
+    }
+
     NSTimeInterval retryAt = 0;
     if (confirmed && _attempts < sizeof(ReplayIntervals) / sizeof(ReplayIntervals[0]) &&
         index + 1 < sizeof(CheckTimes) / sizeof(CheckTimes[0])) {
-        NSTimeInterval earliest = _replayedAt + ReplayIntervals[_attempts];
+        BOOL stalledHover = _attempts == 1 && _unchangedHoverChecks >= 2;
+        NSTimeInterval interval = stalledHover ? StationaryHoverRetry : ReplayIntervals[_attempts];
+        NSTimeInterval earliest = _replayedAt + interval;
         if (now >= earliest) {
-            [self replayOutside:pointerGuard at:now early:NO];
+            BOOL firstReplay = _attempts == 0;
+            NSTimeInterval lastReplay = _replayedAt;
+            if ([self replayOutside:geometry.pointerGuard at:now early:NO]) {
+                if (firstReplay && state == DockStuckHover) _firstHoverFrame = geometry.hoverFrame;
+                if (stalledHover) {
+                    os_log(_log, "Retried stationary Dock hover; after first replay=%{public}ld ms",
+                           lround((now - lastReplay) * 1000));
+                }
+            }
         } else {
             // Observe again at the retry deadline if the next planned check is later.
             retryAt = earliest;

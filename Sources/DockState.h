@@ -2,4 +2,9 @@
 #import <Foundation/Foundation.h>
 #import "Policy.h"
 
-DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, CGRect *pointerGuard);
+typedef struct {
+    CGRect pointerGuard;
+    CGRect hoverFrame;
+} DockGeometry;
+
+DockState DockReadState(pid_t dock, pid_t front, NSArray<NSValue *> *screens, DockGeometry *geometry);

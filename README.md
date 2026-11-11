@@ -6,7 +6,7 @@ DockRelay is a lightweight menu bar app that helps the Dock recover after switch
 
 [简体中文](README.zh-CN.md)
 
-## The Dock bug on macOS 27.2
+## The Dock bug on macOS 27.2.x
 
 With Dock magnification enabled, click an app in the Dock whose window is in another Space. Move the pointer away from the Dock while the desktop is switching. On macOS 27.2, the icon can stay enlarged even after the pointer leaves. If the pointer stays inside the Dock and moves to another icon, the previous icon can remain highlighted or enlarged for a moment.
 
